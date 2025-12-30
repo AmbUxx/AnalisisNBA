@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 # Eliminamos la importación de nba_api.stats.endpoints
 import plotly.express as px
+
 import numpy as np
 import requests # <-- Nueva importación clave para acceder directamente a la API
 
