@@ -1,0 +1,26 @@
+Dependencias del proyecto 
+
+1. Streamlit
+Framework para crear aplicaciones web interactivas con Python.
+Instalación:
+pip install streamlit
+
+2. Pandas
+Librería para análisis y manipulación de datos.
+Instalación:
+pip install pandas
+
+3. Plotly
+Librería para visualización de datos interactivos.
+Instalación:
+pip install plotly
+
+4. NumPy
+Librería para cálculos numéricos y arreglos multidimensionales.
+Instalación:
+pip install numpy
+
+5. Requests
+Librería para realizar solicitudes HTTP y consumir APIs.
+Instalación:
+pip install requests
