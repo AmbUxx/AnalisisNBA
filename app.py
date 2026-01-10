@@ -72,11 +72,11 @@ def render_comparison_tabs(comparacion_df, equipo_a, equipo_b):
         col1, col2 = st.columns(2)
         
         with col1:
-            fig_ratings = crear_grafico_ratings(comparacion_df)
+            fig_ratings = crear_grafico_ratings(comparacion_df, equipo_a, equipo_b)
             st.plotly_chart(fig_ratings, use_container_width=True)
         
         with col2:
-            fig_pace = crear_grafico_pace(comparacion_df)
+            fig_pace = crear_grafico_pace(comparacion_df, equipo_a, equipo_b)
             st.plotly_chart(fig_pace, use_container_width=True)
         
         with st.expander("ℹ️ Explicación de Métricas"):
@@ -93,11 +93,11 @@ def render_comparison_tabs(comparacion_df, equipo_a, equipo_b):
         col1, col2 = st.columns(2)
         
         with col1:
-            fig_ast_to = crear_grafico_ast_to(comparacion_df)
+            fig_ast_to = crear_grafico_ast_to(comparacion_df, equipo_a, equipo_b)
             st.plotly_chart(fig_ast_to, use_container_width=True)
         
         with col2:
-            fig_p3 = crear_grafico_3p(comparacion_df)
+            fig_p3 = crear_grafico_3p(comparacion_df, equipo_a, equipo_b)
             st.plotly_chart(fig_p3, use_container_width=True)
         
         with st.expander("ℹ️ Explicación de Métricas"):

@@ -4,10 +4,65 @@ import pandas as pd
 import plotly.express as px
 
 import numpy as np
+from datetime import datetime
 import requests # <-- Nueva importación clave para acceder directamente a la API
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+try:
+    from nba_api.stats.endpoints import leaguedashteamstats
+    NBA_API_AVAILABLE = True
+except ImportError:
+    NBA_API_AVAILABLE = False
 
 # --- Configuración de la Aplicación ---
 st.set_page_config(layout="wide", page_title="Análisis NBA")
+
+# --- Función para obtener la temporada actual automáticamente ---
+def obtener_temporada_actual():
+    """
+    Determina automáticamente la temporada actual de la NBA.
+    La temporada NBA generalmente va de octubre (año X) a junio (año X+1).
+    Ejemplo: Octubre 2024 - Junio 2025 = temporada "2024-25"
+    """
+    ahora = datetime.now()
+    mes_actual = ahora.month
+    año_actual = ahora.year
+    
+    # Si estamos entre octubre y diciembre, la temporada comenzó este año
+    # Si estamos entre enero y junio, la temporada comenzó el año pasado
+    if mes_actual >= 10:  # Octubre, Noviembre, Diciembre
+        año_inicio = año_actual
+    else:  # Enero - Septiembre
+        año_inicio = año_actual - 1
+    
+    año_fin = año_inicio + 1
+    # Formato: "2024-25"
+    temporada = f"{año_inicio}-{str(año_fin)[-2:]}"
+    
+    return temporada
+
+# --- Función para validar si una temporada existe en la API ---
+@st.cache_data(ttl=86400)  # Cache por 24 horas (las temporadas no cambian tan frecuentemente)
+def validar_temporada_disponible(temporada):
+    """
+    Verifica si una temporada está disponible en la API de NBA.
+    """
+    if not NBA_API_AVAILABLE:
+        return True  # Si no tenemos nba_api, asumimos que es válida
+    
+    try:
+        stats = leaguedashteamstats.LeagueDashTeamStats(
+            league_id_nullable='00',
+            measure_type_detailed_defense='Base',
+            per_mode_detailed='PerGame',
+            season=temporada,
+            season_type_all_star='Regular Season',
+            timeout=10
+        )
+        df = stats.get_data_frames()[0]
+        return len(df) > 0  # Si tiene datos, la temporada existe
+    except:
+        return False
 
 # --- Función de Predicción ---
 def predecir_probabilidad(rating_neto_a, rating_neto_b):
@@ -19,24 +74,37 @@ def predecir_probabilidad(rating_neto_a, rating_neto_b):
     probabilidad_a = 1 / (1 + np.exp(-diferencia / 10))
     return probabilidad_a
 
-# --- Función de Obtención de Datos (Solución Final con requests) ---
-# --- Función de Obtención de Datos (Solución Final: Evitar Bloqueo) ---
-@st.cache_data
+# --- Función de Obtención de Datos (Solución con múltiples métodos) ---
+@st.cache_data(ttl=3600)  # Cache por 1 hora para mantener datos actualizados
 def obtener_datos_nba(temporada='2023-24'):
     """
-    Obtiene y procesa las estadísticas avanzadas directamente desde la URL de la NBA.
-    Se han añadido más headers para simular un navegador real y evitar timeouts/bloqueos.
+    Obtiene y procesa las estadísticas avanzadas desde la API de NBA.
+    Intenta primero con requests directo, y si falla, usa la librería nba_api como alternativa.
     """
     
-    # 1. Definición de Parámetros y URL de la API (Medida de Tipo Avanzada)
-    # Aumentamos los headers para que la solicitud parezca más legítima
+    # Método 1: Intentar con requests directo
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=2,  # Reducir reintentos para fallar más rápido y probar alternativa
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "HEAD"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json, text/plain, */*',
         'Accept-Encoding': 'gzip, deflate, br',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.nba.com/', # <-- Crucial: Simular que navegamos desde la web de la NBA
-        'Connection': 'keep-alive'
+        'Referer': 'https://www.nba.com/',
+        'Origin': 'https://www.nba.com',
+        'Connection': 'keep-alive',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site'
     }
     
     params = {
@@ -51,44 +119,85 @@ def obtener_datos_nba(temporada='2023-24'):
     url = 'https://stats.nba.com/stats/leaguedashteamstats'
     
     try:
-        # 2. Realizar la solicitud HTTP directa con timeout aumentado
-        response = requests.get(url, headers=headers, params=params, timeout=60)
-        response.raise_for_status() 
-
-        # ... (El resto del código de parsing JSON y DataFrame sigue igual)
+        # Intentar método 1: requests directo
+        response = session.get(url, headers=headers, params=params, timeout=(10, 25), verify=True)
+        response.raise_for_status()
         data = response.json()
         team_stats_data = data['resultSets'][0]
         df_nba = pd.DataFrame(team_stats_data['rowSet'], columns=team_stats_data['headers'])
-
-        # 4. Seleccionar y renombrar columnas clave
-        columnas_seleccionadas = {
-            # ... (se mantiene la lista de columnas)
-            'TEAM_NAME': 'Equipo',
-            'GP': 'Juegos Jugados',
-            'W': 'Victorias',
-            'L': 'Derrotas',
-            'W_PCT': 'Porc. Victoria',
-            'PACE': 'Ritmo de Juego', 
-            'E_OFF_RATING': 'Rating Ofensivo', 
-            'E_DEF_RATING': 'Rating Defensivo',
-            'AST': 'Asistencias',
-            'TOV': 'Pérdidas',
-            'FG3_PCT': '3P%'
-        }
+        session.close()
         
-        columnas_a_usar = [col for col in columnas_seleccionadas.keys() if col in df_nba.columns]
-        df_nba = df_nba[columnas_a_usar].rename(columns=columnas_seleccionadas)
-        df_nba['AST/TO'] = df_nba['Asistencias'] / df_nba['Pérdidas']
-        
-        return df_nba
-        
-    except requests.exceptions.RequestException as e:
-        # Mensaje de error ajustado para indicar un bloqueo de red
-        st.error(f"Error de Bloqueo de Conexión: La solicitud fue rechazada o superó el tiempo de espera. Causa: {e}. Por favor, desactiva tu VPN/Firewall e inténtalo de nuevo.")
-        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Error general al procesar datos: {e}") 
-        return pd.DataFrame()
+        session.close()
+        
+        # Método 2: Usar nba_api como alternativa
+        if NBA_API_AVAILABLE:
+            try:
+                st.info("🔄 Intentando método alternativo con nba_api...")
+                
+                # Obtener estadísticas base (AST, TOV, FG3_PCT)
+                stats_base = leaguedashteamstats.LeagueDashTeamStats(
+                    league_id_nullable='00',
+                    measure_type_detailed_defense='Base',
+                    per_mode_detailed='PerGame',
+                    season=temporada,
+                    season_type_all_star='Regular Season',
+                    timeout=30
+                )
+                df_base = stats_base.get_data_frames()[0]
+                
+                # Obtener estadísticas avanzadas (PACE, Ratings)
+                stats_advanced = leaguedashteamstats.LeagueDashTeamStats(
+                    league_id_nullable='00',
+                    measure_type_detailed_defense='Advanced',
+                    per_mode_detailed='PerGame',
+                    season=temporada,
+                    season_type_all_star='Regular Season',
+                    timeout=30
+                )
+                df_advanced = stats_advanced.get_data_frames()[0]
+                
+                # Combinar ambos DataFrames usando TEAM_ID como clave
+                df_nba = pd.merge(
+                    df_base[['TEAM_ID', 'TEAM_NAME', 'GP', 'W', 'L', 'W_PCT', 'AST', 'TOV', 'FG3_PCT']],
+                    df_advanced[['TEAM_ID', 'PACE', 'E_OFF_RATING', 'E_DEF_RATING']],
+                    on='TEAM_ID',
+                    how='inner'
+                )
+                
+                st.success("✅ Datos obtenidos usando nba_api")
+            except Exception as e2:
+                st.error(f"❌ Ambos métodos fallaron. Error en nba_api: {type(e2).__name__}: {e2}")
+                st.error(f"Error inicial en requests: {type(e).__name__}")
+                return pd.DataFrame()
+        else:
+            st.error(f"❌ Error al obtener datos. Causa: {type(e).__name__}: {e}")
+            st.info("💡 Tip: Instala nba_api ejecutando: pip install nba-api")
+            return pd.DataFrame()
+
+    # Procesar y formatear los datos (igual para ambos métodos)
+    columnas_seleccionadas = {
+        'TEAM_NAME': 'Equipo',
+        'GP': 'Juegos Jugados',
+        'W': 'Victorias',
+        'L': 'Derrotas',
+        'W_PCT': 'Porc. Victoria',
+        'PACE': 'Ritmo de Juego', 
+        'E_OFF_RATING': 'Rating Ofensivo', 
+        'E_DEF_RATING': 'Rating Defensivo',
+        'AST': 'Asistencias',
+        'TOV': 'Pérdidas',
+        'FG3_PCT': '3P%'
+    }
+    
+    columnas_a_usar = [col for col in columnas_seleccionadas.keys() if col in df_nba.columns]
+    df_nba = df_nba[columnas_a_usar].rename(columns=columnas_seleccionadas)
+    
+    # Validar que las columnas necesarias existen antes de calcular AST/TO
+    if 'Asistencias' in df_nba.columns and 'Pérdidas' in df_nba.columns:
+        df_nba['AST/TO'] = df_nba['Asistencias'] / df_nba['Pérdidas'].replace(0, 1)  # Evitar división por cero
+    
+    return df_nba
 
 
 # --- Lógica Principal de la Aplicación ---
@@ -96,10 +205,54 @@ def main():
     st.title("ANALISIS DE DATOS V ALPHA 1.0")
     st.markdown("---")
 
-    # Obtener el DataFrame
-    # ELIMINAMOS LA IMPORTACIÓN DE NBA_API AQUÍ, pero la llamaremos más abajo.
-    # Necesitas eliminar 'from nba_api.stats.endpoints import leaguedashteamstats' de la parte superior del script original
-    df_nba = obtener_datos_nba(temporada='2023-24') 
+    # Determinar automáticamente la temporada actual
+    temporada_actual = obtener_temporada_actual()
+    
+    # Verificar si la temporada actual está disponible, si no, usar la anterior
+    temporada_a_usar = temporada_actual
+    if not validar_temporada_disponible(temporada_actual):
+        # Si la temporada actual no está disponible (todavía no empezó), usar la anterior
+        año_inicio = int(temporada_actual.split('-')[0])
+        año_fin = año_inicio
+        año_anterior = año_inicio - 1
+        temporada_a_usar = f"{año_anterior}-{str(año_fin)[-2:]}"
+        st.info(f"ℹ️ La temporada {temporada_actual} aún no está disponible. Mostrando datos de {temporada_a_usar}.")
+
+    # Selector de temporada en el sidebar (opcional, para cambiar si se desea)
+    st.sidebar.header("⚙️ Configuración")
+    
+    # Generar lista de temporadas recientes
+    año_inicio = int(temporada_a_usar.split('-')[0])
+    temporadas_disponibles = []
+    for i in range(4):  # Últimas 4 temporadas
+        año = año_inicio - i
+        año_sig = año + 1
+        temporadas_disponibles.append(f"{año}-{str(año_sig)[-2:]}")
+    
+    # Encontrar el índice de la temporada actual
+    try:
+        indice_default = temporadas_disponibles.index(temporada_a_usar)
+    except ValueError:
+        indice_default = 0
+    
+    temporada_seleccionada = st.sidebar.selectbox(
+        "Temporada",
+        temporadas_disponibles,
+        index=indice_default,
+        help="Por defecto se usa la temporada más reciente disponible. Puedes cambiar manualmente si lo deseas."
+    )
+    
+    st.sidebar.caption(f"📊 Datos actualizados de la temporada {temporada_seleccionada}")
+    st.sidebar.caption("🔄 Los datos se actualizan automáticamente desde la API oficial de la NBA")
+    
+    # Botón para forzar actualización de datos
+    if st.sidebar.button("🔄 Actualizar Datos Ahora"):
+        obtener_datos_nba.clear()  # Limpiar el cache para forzar actualización
+        validar_temporada_disponible.clear()  # También limpiar validación de temporada
+        st.rerun()
+
+    # Obtener el DataFrame con la temporada seleccionada
+    df_nba = obtener_datos_nba(temporada=temporada_seleccionada) 
 
     if df_nba.empty:
         st.stop()
@@ -232,3 +385,4 @@ def main():
         
 if __name__ == "__main__":
     main()
+    

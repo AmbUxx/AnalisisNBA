@@ -43,11 +43,19 @@ def render_comparison_table(comparacion_df, equipo_a, equipo_b):
         # Crear sub-dataframe con las métricas de esta categoría
         df_categoria = comparacion_df.loc[metricas_disponibles]
         
-        # Crear lista de datos para el DataFrame
+        # Crear lista de datos para el DataFrame con información de mejor/peor
         filas = []
+        datos_auxiliares = []  # Guardar información adicional para estilos
+        
         for idx in metricas_disponibles:
             valor_a = df_categoria.loc[idx, equipo_a]
             valor_b = df_categoria.loc[idx, equipo_b]
+            
+            # Determinar mejor y peor
+            if 'Defensivo' in idx or 'Pérdidas' in idx:
+                es_mejor_a = valor_a < valor_b
+            else:
+                es_mejor_a = valor_a > valor_b
             
             # Formatear valores
             if '%' in idx or 'Porc' in idx:
@@ -60,13 +68,26 @@ def render_comparison_table(comparacion_df, equipo_a, equipo_b):
                 valor_a_str = f"{valor_a:.2f}"
                 valor_b_str = f"{valor_b:.2f}"
             
-            # Determinar mejor
-            if 'Defensivo' in idx or 'Pérdidas' in idx:
-                es_mejor_a = valor_a < valor_b
-            else:
-                es_mejor_a = valor_a > valor_b
+            # Representación clara del mejor equipo usando nombres
+            # Extraer nombre corto del equipo (primera palabra o abreviación)
+            def obtener_nombre_corto(nombre_completo):
+                """Obtiene un nombre corto del equipo"""
+                palabras = nombre_completo.split()
+                if len(palabras) > 1:
+                    # Si tiene múltiples palabras, usar la primera
+                    return palabras[0]
+                else:
+                    # Si es una sola palabra, usar primeros 8 caracteres
+                    return nombre_completo[:8]
             
-            mejor_str = "▲" if es_mejor_a else "▲"
+            nombre_a_corto = obtener_nombre_corto(equipo_a)
+            nombre_b_corto = obtener_nombre_corto(equipo_b)
+            
+            # Formato más claro: nombre del equipo con flecha direccional
+            if es_mejor_a:
+                mejor_str = f"◄ {nombre_a_corto}"  # Equipo A es mejor (flecha apunta a la izquierda)
+            else:
+                mejor_str = f"{nombre_b_corto} ►"  # Equipo B es mejor (flecha apunta a la derecha)
             
             filas.append({
                 'Métrica': idx,
@@ -74,44 +95,55 @@ def render_comparison_table(comparacion_df, equipo_a, equipo_b):
                 equipo_b: valor_b_str,
                 'Mejor': mejor_str
             })
+            
+            # Guardar datos auxiliares
+            datos_auxiliares.append({
+                'es_mejor_a': es_mejor_a,
+                'valor_a': valor_a,
+                'valor_b': valor_b
+            })
         
         df_display = pd.DataFrame(filas)
         
-        # Crear función para aplicar estilos por fila
-        def aplicar_estilos_fila(row):
-            """Aplica estilos a una fila específica"""
-            idx_metrica = row['Métrica']
-            valor_a_num = df_categoria.loc[idx_metrica, equipo_a]
-            valor_b_num = df_categoria.loc[idx_metrica, equipo_b]
+        # Función para aplicar estilos por fila
+        def aplicar_estilos(row):
+            """Aplica estilos: verde para mejor, rojo para peor"""
+            fila_idx = row.name
+            aux_data = datos_auxiliares[fila_idx]
+            es_mejor_a = aux_data['es_mejor_a']
             
-            # Determinar cuál es mejor
-            if 'Defensivo' in idx_metrica or 'Pérdidas' in idx_metrica:
-                es_mejor_a = valor_a_num < valor_b_num
-            else:
-                es_mejor_a = valor_a_num > valor_b_num
+            # Crear array de estilos para cada columna
+            estilos = [''] * len(row)
+            columnas = list(row.index)
             
-            # Crear diccionario de estilos usando nombres de columnas
-            estilos = {
-                'Métrica': '',
-                equipo_a: '',
-                equipo_b: '',
-                'Mejor': 'color: #00ff88; font-weight: 700; text-align: center;'
-            }
+            # Índices de columnas
+            idx_metrica = columnas.index('Métrica')
+            idx_equipo_a = columnas.index(equipo_a)
+            idx_equipo_b = columnas.index(equipo_b)
+            idx_mejor = columnas.index('Mejor')
             
-            # Aplicar estilo al mejor valor
+            # Estilo para columna "Mejor" - cian
+            estilos[idx_mejor] = 'color: #00d9ff; font-weight: 700; text-align: center; font-family: monospace; font-size: 1rem;'
+            
+            # Aplicar estilos según cuál es mejor
             if es_mejor_a:
-                estilos[equipo_a] = 'background-color: rgba(0, 255, 136, 0.2); color: #00ff88; font-weight: 700; font-family: monospace;'
+                # Equipo A es mejor - verde
+                estilos[idx_equipo_a] = 'background-color: rgba(0, 255, 136, 0.25); color: #00ff88; font-weight: 700; font-family: monospace; border-left: 3px solid #00ff88; padding-left: 0.5rem;'
+                # Equipo B es peor - rojo
+                estilos[idx_equipo_b] = 'background-color: rgba(255, 68, 68, 0.25); color: #ff4444; font-weight: 600; font-family: monospace;'
             else:
-                estilos[equipo_b] = 'background-color: rgba(0, 255, 136, 0.2); color: #00ff88; font-weight: 700; font-family: monospace;'
+                # Equipo B es mejor - verde
+                estilos[idx_equipo_b] = 'background-color: rgba(0, 255, 136, 0.25); color: #00ff88; font-weight: 700; font-family: monospace; border-left: 3px solid #00ff88; padding-left: 0.5rem;'
+                # Equipo A es peor - rojo
+                estilos[idx_equipo_a] = 'background-color: rgba(255, 68, 68, 0.25); color: #ff4444; font-weight: 600; font-family: monospace;'
             
-            # Retornar en el orden de las columnas
-            return [estilos[col] for col in df_display.columns]
+            return estilos
         
-        # Aplicar estilos usando style.apply
+        # Aplicar estilos
         try:
-            df_styled = df_display.style.apply(aplicar_estilos_fila, axis=1)
-        except Exception:
-            # Si falla el estilo, mostrar sin estilos
+            df_styled = df_display.style.apply(aplicar_estilos, axis=1)
+        except Exception as e:
+            st.error(f"Error en estilos: {e}")
             df_styled = df_display
         
         # Mostrar tabla
